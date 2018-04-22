@@ -33,42 +33,71 @@ trans_color_dict = {
 
 def query_all(in_sql, cur):
 	cur.execute()
-	return cur.fetchall()
+	return cur.fetchall()	
 
-def lookup(in_conn):
-	cur_trips = in_conn.cursor()
+def lookup_gpmode(in_conn, trips_key_val, trip_dep_time, trip_arr_time):
 	cur_gpmode = in_conn.cursor()
-	cur_loc = in_conn.cursor()
-	cur_trips.itersize = 10000
 	cur_gpmode.itersize = 10000
+
+	gpmode_sql = '''SELECT *
+					FROM traces_gpmode as gp
+					WHERE gp.deviceid = \'{}\'
+					AND gp.modetime>=\'{}\'
+					AND gp.modetime<=\'{}\'
+					ORDER BY gp.modetime;
+			 	 '''.format(trips_key_val,
+			 				trip_dep_time,
+			 				trip_arr_time)
+	cur_gpmode.execute(gpmode_sql)
+	lookup_result = list(cur_gpmode)
+
+	if len(lookup_result) > 0:
+		return lookup_result
+	else:
+		return []
+
+def lookup_loc(in_conn, trips_key_val, trip_dep_time, trip_arr_time):
+	cur_loc = in_conn.cursor()
 	cur_loc.itersize = 10000
 
+	loc_sql = '''
+				SELECT *
+				FROM traces_location as loc
+				WHERE loc.deviceid = \'{}\'
+				AND loc.pointtime>=\'{}\'
+				AND loc.pointtime<=\'{}\'
+				ORDER BY loc.pointtime;
+			  '''.format(trips_key_val,
+			 			 trip_dep_time,
+			 			 trip_arr_time)
+
+	cur_loc.execute(loc_sql)
+	lookup_result = list(cur_loc)
+
+	if len(lookup_result) > 0:
+		return lookup_result
+	else:
+		return []
+
+def lookup(in_conn):
+	#get trips
+	cur_trips = in_conn.cursor()
+	cur_trips.itersize = 10000
 	trips_sql = 'SELECT * FROM trips;'
 	cur_trips.execute(trips_sql)
+
+	#loop trips
 	for row_trips in cur_trips:
 		trips_key_val = row_trips[9] #row_trips[9]: userid
 		trip_dep_time = str(row_trips[3]) #row_trips[3]: departtime
 		trip_arr_time = str(row_trips[4]) #row_trips[4]: arrivetime
+		print('gpmode:', trip_dep_time, trip_arr_time)
+		gpmode_traces = lookup_gpmode(in_conn, trips_key_val, trip_dep_time, trip_arr_time)
+		loc_traces = lookup_loc(in_conn, trips_key_val, trip_dep_time, trip_arr_time)
 
-		gpmode_sql = '''SELECT *
-						FROM traces_gpmode as gp, traces_location as loc
-						WHERE gp.deviceid = \'{}\'
-						AND gp.modetime>=\'{}\'
-						AND gp.modetime<=\'{}\'
-						AND gp.deviceid = loc.deviceid
-						AND gp.epochtime >= loc.epochtime - 25
-						AND gp.epochtime <= loc.epochtime + 25
-						ORDER BY gp.modetime, loc.pointtime;
-				 	 '''.format(trips_key_val,
-				 				trip_dep_time,
-				 				trip_arr_time)
-		cur_gpmode.execute(gpmode_sql)
-		lookup_result = list(cur_gpmode)	
+		yield gpmode_traces, loc_traces
 
-		if len(lookup_result) > 0:
-			yield lookup_result
-		else:
-			continue
+
 
 def simple_test_query(db_conn):
 	cur_ = db_conn.cursor()
@@ -96,74 +125,6 @@ def get_type(trace):
 	type_ = np.array([int(x) for x in trace[2:8]]).argmax()
 	return type_
 
-def plot_trace(in_traces):
-
-	lon_0 = -122.5194
-	lon_1 = -122.3119
-	lat_0 = 37.6749
-	lat_1 = 37.8749
-
-	test_lat = in_traces[0][15]
-	test_lon = in_traces[0][16]
-	if test_lat >= lat_0 and test_lat <= lat_1 and test_lon >= lon_0 and test_lon <= lon_1:
-
-		print('plot')
-		plt.figure(figsize=(15, 15), dpi=100)
-
-		sf_map = Basemap(projection='merc',
-					 resolution='h',
-					 area_thresh=.01,
-					 llcrnrlon=float(test_lon)-.008,
-					 llcrnrlat=float(test_lat)-.008,
-					 urcrnrlon=float(test_lon)+.008,
-					 urcrnrlat=float(test_lat)+.008)
-					 #llcrnrlon=-125.5194,
-					 #llcrnrlat=33.6749,
-					 #urcrnrlon=-117.3119,
-					 #urcrnrlat=40.8749)
-
-		sf_map.readshapefile('sf_shape/geo_export_sf',
-	    					 'SF')
-	    					 #color='none',
-	    				     #zorder=2)
-
-		sf_map.drawcoastlines()
-		sf_map.drawcountries()
-		#sf_map.fillcontinents(color = 'coral')
-		#sf_map.drawmapboundary()
-			
-		ver_pos = 2200
-		trace_i = 0
-		for trace in in_traces:
-			lat = float(trace[15])
-			lon = float(trace[16])
-			x,y = sf_map(lon, lat)
-
-			trace_type_num = get_type(trace)
-			trace_type = trans_type_dict[trace_type_num]
-			mark_color = trans_color_dict[trace_type_num]
-			#sf_map.plot(x, y, 'x', markersize=10, color=mark_color)
-			plt.text(x, y, str(trace_i), fontsize=20, color=mark_color)
-
-			plt.text(1800, ver_pos, '{}: {}'.format(trace_i, trace_type), fontsize=20, color=mark_color)
-			ver_pos -= 50
-			trace_i+=1
-
-		#text positions
-		#plt.text(1800, 2200,'aaaaa')
-		#plt.text(1800, 2160,'aaaaa')
-			
-
-		#lon = [x for x in in_traces[16]]
-		#lat = [x for x in in_traces[15]]
-
-		
-		#plt.show()
-		fname = 'plots_/{}_{}.png'.format(in_traces[0][14], in_traces[0][0])
-		plt.savefig(fname)
-	
-
-
 def get_trip_type_max_val(traces_of_trip, trans_type_dict=trans_type_dict):
 
 	trace_types = []
@@ -189,32 +150,15 @@ def show_type_prob(in_traces, trans_type_dict=trans_type_dict):
 		print([int(x) for x in trace[2:8]], max_type, interval)
 	print('')
 
-def get_speeds(in_traces):
-	prev_time = 0
-	prev_loc = (0.0, 0.0)
-	speeds = []
-
+def print_trace(in_traces):
 	for trace in in_traces:
-		time_delta = float(trace[10] - prev_time)
-		prev_time = trace[10]
-		print(time_delta)
+		print(trace)
 
-		curr_loc = (trace[15], trace[16])
-		distance = geodesic(prev_loc, curr_loc).miles
-		prev_loc = curr_loc
+def get_speeds(in_traces):
+	pass
 
-		if time_delta != 0:
-			speeds.append(distance/time_delta)
-
-	return speeds
-
-
-#consider mode inaccurate if speed doesn't correspond to trans mode
 def speed_filter(in_traces):
-	speeds_ = get_speeds(in_traces)
-	print(speeds_)
-	print(len(speeds_))
-	print(len(in_traces))
+	pass
 
 
 
@@ -232,18 +176,13 @@ def look_up_trips(db_conn, size=1):
 
 	lookup_gen = lookup(db_conn)
 	n = 0
-
 	
-	for item in lookup_gen:
-		#for row in item:
-			#print(row)
+	for gpmode_traces, loc_traces in lookup_gen:
 
-		#test get_trip_type
-		#get_trip_type_max_val(item)
-		show_type_prob(item)
-		speed_filter(item)
-		#plot_sf()
-		#plot_trace(item)
+		print_trace(gpmode_traces)
+		print('')
+		print_trace(loc_traces)
+		print('')
 		
 
 		n+=1
