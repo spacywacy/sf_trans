@@ -1,5 +1,6 @@
 import psycopg2
 from time import time
+import time as T
 from datetime import datetime
 import numpy as np
 import matplotlib
@@ -8,6 +9,8 @@ from mpl_toolkits.basemap import Basemap
 import matplotlib.pyplot as plt
 import math
 from geopy.distance import geodesic
+import pytz
+from datetime import timedelta
 
 
 
@@ -219,6 +222,95 @@ def speed_filter(gp, loc):
 
 	return drop_by_index(gp, drop)
 
+def utc_to_local(utc_dt):
+    local_dt = utc_dt.replace(tzinfo=pytz.utc).astimezone(local_tz)
+    return local_tz.normalize(local_dt)
+
+def date2epoch(in_date, tz_str='America/Los_Angeles'):
+	tz = pytz.timezone(tz_str)
+
+	# a datetime with timezone
+	dt_with_tz = tz.localize(in_date, is_dst=None)
+
+	# get timestamp
+	ts = int((dt_with_tz - datetime(1970, 1, 1, tzinfo=pytz.utc)).total_seconds())
+	# -> 1346200430.0
+
+	return ts
+
+def epoch2date(in_epoch, tz_str='America/Los_Angeles'):
+	#return T.strftime('%Y-%m-%d %H:%M:%S', T.localtime(in_epoch))
+
+	tz = pytz.timezone(tz_str)
+	dt = datetime.fromtimestamp(in_epoch, tz)
+
+	return dt.strftime('%Y-%m-%d %H:%M:%S')
+
+
+def gen_days_epoch(start_date, end_date):
+
+	period = (end_date - start_date).days
+	days = [start_date]
+	curr_date = start_date
+	for i in range(period):
+		curr_date += timedelta(1)
+		days.append(curr_date)
+
+	return [date2epoch(x) for x in days]
+
+def count_by_device(device_list, count_dict):
+	for device in device_list:
+		count_dict[device] = count_dict.get(device, 0) + 1
+
+def accumulate_cdf(count_dict):
+	count_by_days = {}
+	for key, val in count_dict.items():
+		count_by_days[val] = count_by_days.get(val, 0) + 1
+
+	days = list(count_by_days.keys())
+	days.sort()
+	
+	return [(x, count_by_days[x]) for x in days]
+
+
+def build_cdf(in_conn, start_date, end_date, daily_thre=1440):
+	days = gen_days_epoch(start_date, end_date)
+	count_dict = {}
+	
+	for i in range(len(days)-1):
+		cur_loc = in_conn.cursor('cdf_in_loop_{}'.format(i))
+		cur_loc.itersize = 10000
+
+		epoch0 = days[i]
+		epoch1 = days[i+1]
+		sql_ = '''
+			SELECT deviceid
+			FROM traces_location as loc
+			WHERE loc.epochtime >= {}
+			AND loc.epochtime <= {}
+			GROUP BY loc.deviceid
+			HAVING count(*) >= {}
+		   '''.format(epoch0, epoch1, daily_thre)
+
+		cur_loc.execute(sql_)
+		result = list(cur_loc)
+		count_by_device(result, count_dict)
+		print('day {}:'.format(i+1))
+
+	cdf_data = accumulate_cdf(count_dict)
+	return cdf_data
+
+#get total amount of users in a period
+#who are those who have good data & what to do with them?
+#plot cdf
+
+
+
+
+
+
+
+
 
 
 
@@ -265,7 +357,13 @@ def main():
 	t0 = time()
 
 	#simple_test_query(conn)
-	look_up_trips(conn)
+	#look_up_trips(conn)
+
+	start_ = datetime(2013, 10, 25, 0, 0, 0)
+	end_ = datetime(2013, 12, 15, 0, 0, 0)
+	cdf_ = build_cdf(conn, start_, end_)
+	for item in cdf_:
+		print(item)
 
 
 	t1 = time()
@@ -278,7 +376,6 @@ def main():
 
 if __name__ == '__main__':
 	main()
-
 
 
 

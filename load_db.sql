@@ -54,6 +54,9 @@ lon numeric
 CREATE INDEX deviceid_index_loc
 ON traces_location (deviceid);
 
+CREATE INDEX loc_epoch
+ON traces_location (epochtime);
+
 
 /*
 COPY traces_gpmode FROM '/home/larry/code_push/sf_trans/mock_traces_gpmode.csv' DELIMITER ',' CSV HEADER;
